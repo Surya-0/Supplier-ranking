@@ -1,7 +1,5 @@
 import streamlit as st
 import networkx as nx
-import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
@@ -10,7 +8,11 @@ import json
 import matplotlib.pyplot as plt
 from networkx.drawing.layout import spring_layout
 from Supplier_Ranking import SupplyChainGraph
+from pyvis.network import Network
+import streamlit.components.v1 as components
 import time
+import os
+import random
 
 # Set page configuration
 st.set_page_config(
@@ -45,6 +47,88 @@ st.markdown("""
     }
     </style>
     """, unsafe_allow_html=True)
+
+
+def display_graph(G: nx.Graph, timestamp: str = "", max_nodes: int = 50):
+    """Display graph using pyvis"""
+    # Create a new graph for visualization
+    vis_graph = nx.Graph()
+
+    # Randomly sample nodes if there are too many
+    nodes_to_show = list(G.nodes())
+    if len(nodes_to_show) > max_nodes:
+        nodes_to_show = random.sample(nodes_to_show, max_nodes)
+
+    # Add selected nodes and their edges
+    for node in nodes_to_show:
+        # Add node with its attributes
+        vis_graph.add_node(node, **G.nodes[node])
+
+        # Add edges between selected nodes
+        for neighbor in G.neighbors(node):
+            if neighbor in nodes_to_show:
+                vis_graph.add_edge(node, neighbor, **G.edges[node, neighbor])
+
+    # Create and configure the pyvis network
+    net = Network(notebook=True, height="500px", width="100%")
+
+    # Define fixed colors for node types
+    node_colors = {
+        "supplier": "#1E88E5",  # Blue
+        "part": "#43A047",  # Green
+        "warehouse": "#FDD835"  # Yellow
+    }
+
+    # Add nodes with different colors based on type
+    for node, attrs in vis_graph.nodes(data=True):
+        node_type = attrs.get("type", "default")
+        color = node_colors.get(node_type, "#999999")  # Default gray for unknown types
+        net.add_node(node, color=color, title=str(attrs))
+
+    # Add edges
+    for source, target, attrs in vis_graph.edges(data=True):
+        net.add_edge(source, target, title=str(attrs))
+
+    # Set physics options for better layout
+    net.set_options("""
+        var options = {
+            "physics": {
+                "forceAtlas2Based": {
+                    "gravitationalConstant": -100,
+                    "centralGravity": 0.01,
+                    "springLength": 100,
+                    "springConstant": 0.08
+                },
+                "minVelocity": 0.75,
+                "solver": "forceAtlas2Based"
+            },
+            "nodes": {
+                "font": {
+                    "size": 12
+                }
+            },
+            "edges": {
+                "color": {
+                    "opacity": 0.7
+                },
+                "smooth": {
+                    "type": "continuous"
+                }
+            }
+        }
+    """)
+
+    # Ensure cache directory exists
+    os.makedirs("cache", exist_ok=True)
+
+    # Generate HTML file
+    html_file = f"cache/graph_{timestamp.replace(' ', '_')}.html"
+    net.save_graph(html_file)
+
+    # Read the generated HTML
+    with open(html_file, "r") as f:
+        source_code = f.read()
+    components.html(source_code, height=500)
 
 
 def create_network_visualization(G):
@@ -221,11 +305,20 @@ def create_ranking_heatmap(ranking_df):
 def main():
     st.title("🏭 Supply Chain Analysis Dashboard")
 
+    # Store the analysis state
+    if 'analysis_complete' not in st.session_state:
+        st.session_state.analysis_complete = False
+    if 'current_ranking' not in st.session_state:
+        st.session_state.current_ranking = None
+
     # Sidebar configuration
     st.sidebar.header("Configuration")
     base_url = st.sidebar.text_input("Base URL", value="http://localhost:8000")
     version = st.sidebar.text_input("Version", value="v2")
     timestamp = st.sidebar.text_input("Timestamp", value="3")
+
+    # Add max nodes slider
+    max_nodes = st.sidebar.slider("Maximum nodes to display", 10, 200, 50)
 
     structural_weight = st.sidebar.slider(
         "Structural Weight",
@@ -239,34 +332,28 @@ def main():
     # Initialize supply chain graph
     scg = SupplyChainGraph()
 
-    # Add a "Run Analysis" button
     if st.sidebar.button("Run Analysis"):
         with st.spinner("Fetching data and performing analysis..."):
-            # Fetch and process data
             data = scg.fetch_data(base_url, version, timestamp)
 
             if data:
-                # Create two columns for the layout
-                col1, col2 = st.columns(2)
-
-                # Build graph and create visualization
+                # Build graph
                 G = scg.build_graph()
 
-                st.subheader("Network Statistics")
-                stats_col1, stats_col2, stats_col3 = st.columns(3)
-
-                with stats_col1:
-                    st.metric("Total Nodes", len(G.nodes()))
-                with stats_col2:
-                    st.metric("Total Edges", len(G.edges()))
-                with stats_col3:
-                    st.metric("Network Density",
-                              round(nx.density(G), 4))
-
+                # Display network visualization
                 st.subheader("Network Visualization")
-                network_fig = create_network_visualization(G)
-                st.plotly_chart(network_fig, use_container_width=True)
+                display_graph(G, timestamp, max_nodes)
 
+                # Display network statistics
+                st.subheader("Network Statistics")
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric("Total Nodes", len(G.nodes()))
+                with col2:
+                    st.metric("Total Edges", len(G.edges()))
+                with col3:
+                    st.metric("Network Density", round(nx.density(G), 4))
 
                 # Calculate rankings
                 ranking = scg.calculate_final_ranking(
@@ -274,27 +361,26 @@ def main():
                     attribute_weight=attribute_weight
                 )
 
-                # Display rankings
-                st.subheader("Supplier Rankings")
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.dataframe(ranking.style.highlight_max(subset=['Final Score']))
-
-                with col2:
-                    heatmap_fig = create_ranking_heatmap(ranking)
-                    st.plotly_chart(heatmap_fig, use_container_width=True)
-
-                # Download button for rankings
-                csv = ranking.to_csv(index=False)
-                st.download_button(
-                    label="Download Rankings as CSV",
-                    data=csv,
-                    file_name="supplier_rankings.csv",
-                    mime="text/csv",
-                )
+                # Store the ranking in session state
+                st.session_state.current_ranking = ranking
+                st.session_state.analysis_complete = True
             else:
                 st.error("Failed to fetch data. Please check your connection and parameters.")
+
+    # Display rankings and download button if analysis is complete
+    if st.session_state.analysis_complete and st.session_state.current_ranking is not None:
+        st.subheader("Supplier Rankings")
+        st.dataframe(st.session_state.current_ranking.style.highlight_max(subset=['Final Score']))
+
+        # Create download button
+        csv = st.session_state.current_ranking.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download Rankings as CSV",
+            data=csv,
+            file_name="supplier_rankings.csv",
+            mime="text/csv",
+            key='download_rankings'  # Add a unique key
+        )
 
 
 if __name__ == "__main__":
