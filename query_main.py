@@ -100,8 +100,6 @@ def display_graph(G: nx.Graph, timestamp: str = "", max_nodes: int = 50):
     components.html(source_code, height=800)
 
 
-
-
 def create_network_visualization(G):
     """Create an enhanced network visualization using Plotly with Kamada-Kawai layout"""
     # Use Kamada-Kawai layout for better node distribution

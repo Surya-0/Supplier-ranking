@@ -163,107 +163,64 @@ def display_path_explorer():
 
 
 def display_advanced_metrics():
-    """Display advanced filtering and exploration metrics"""
-    st.subheader("Advanced Supply Chain Analysis")
+    st.subheader("Node and Edge Filtering")
 
-    # Create tabs for different analysis types
-    filter_tab, subgraph_tab = st.tabs(["Attribute Filtering", "Subgraph Analysis"])
+    # Node type selection for filtering
+    node_types = list(set(nx.get_node_attributes(st.session_state.G, 'type').values()))
+    selected_node_type = st.selectbox("Select Node Type to Filter", node_types)
 
-    with filter_tab:
-        st.subheader("Node and Edge Filtering")
+    # Get all possible node attributes for the selected type
+    sample_node = next(n for n, d in st.session_state.G.nodes(data=True)
+                       if d.get('type') == selected_node_type)
+    node_attributes = list(st.session_state.G.nodes[sample_node].keys())
+    node_attributes.remove('type')  # Remove type as it's already selected
 
-        # Node type selection for filtering
-        node_types = list(set(nx.get_node_attributes(st.session_state.G, 'type').values()))
-        selected_node_type = st.selectbox("Select Node Type to Filter", node_types)
+    if node_attributes:
+        # Node attribute filtering
+        st.write("Filter Nodes by Attributes")
+        selected_attr = st.selectbox("Select Attribute", node_attributes)
 
-        # Get all possible node attributes for the selected type
-        sample_node = next(n for n, d in st.session_state.G.nodes(data=True)
-                           if d.get('type') == selected_node_type)
-        node_attributes = list(st.session_state.G.nodes[sample_node].keys())
-        node_attributes.remove('type')  # Remove type as it's already selected
+        # Get unique values for the selected attribute
+        unique_values = set()
+        for _, attrs in st.session_state.G.nodes(data=True):
+            if attrs.get('type') == selected_node_type and selected_attr in attrs:
+                unique_values.add(attrs[selected_attr])
 
-        if node_attributes:
-            # Node attribute filtering
-            st.write("Filter Nodes by Attributes")
-            selected_attr = st.selectbox("Select Attribute", node_attributes)
+        # Create appropriate filter input based on attribute values
+        if all(isinstance(x, (int, float)) for x in unique_values if x is not None):
+            # Numeric filter
+            min_val = min(x for x in unique_values if x is not None)
+            max_val = max(x for x in unique_values if x is not None)
+            filter_value = st.slider(f"Filter by {selected_attr}",
+                                     float(min_val), float(max_val),
+                                     (float(min_val), float(max_val)))
 
-            # Get unique values for the selected attribute
-            unique_values = set()
-            for _, attrs in st.session_state.G.nodes(data=True):
-                if attrs.get('type') == selected_node_type and selected_attr in attrs:
-                    unique_values.add(attrs[selected_attr])
+            filtered_nodes = [n for n, d in st.session_state.G.nodes(data=True)
+                              if d.get('type') == selected_node_type
+                              and d.get(selected_attr) is not None
+                              and filter_value[0] <= float(d[selected_attr]) <= filter_value[1]]
+        else:
+            # Categorical filter
+            filter_value = st.multiselect(f"Select {selected_attr}", list(unique_values))
+            filtered_nodes = [n for n, d in st.session_state.G.nodes(data=True)
+                              if d.get('type') == selected_node_type
+                              and d.get(selected_attr) in filter_value]
 
-            # Create appropriate filter input based on attribute values
-            if all(isinstance(x, (int, float)) for x in unique_values if x is not None):
-                # Numeric filter
-                min_val = min(x for x in unique_values if x is not None)
-                max_val = max(x for x in unique_values if x is not None)
-                filter_value = st.slider(f"Filter by {selected_attr}",
-                                         float(min_val), float(max_val),
-                                         (float(min_val), float(max_val)))
+        if filtered_nodes:
+            st.write(f"Found {len(filtered_nodes)} matching nodes")
+            st.write("Sample of filtered nodes:")
 
-                filtered_nodes = [n for n, d in st.session_state.G.nodes(data=True)
-                                  if d.get('type') == selected_node_type
-                                  and d.get(selected_attr) is not None
-                                  and filter_value[0] <= float(d[selected_attr]) <= filter_value[1]]
-            else:
-                # Categorical filter
-                filter_value = st.multiselect(f"Select {selected_attr}", list(unique_values))
-                filtered_nodes = [n for n, d in st.session_state.G.nodes(data=True)
-                                  if d.get('type') == selected_node_type
-                                  and d.get(selected_attr) in filter_value]
+            # Create a DataFrame for better visualization
+            filtered_data = []
+            for node in filtered_nodes[:10]:  # Show first 10 nodes
+                node_data = st.session_state.G.nodes[node]
+                filtered_data.append({
+                    'Node ID': node,
+                    **{k: v for k, v in node_data.items() if k != 'type'}
+                })
 
-            if filtered_nodes:
-                st.write(f"Found {len(filtered_nodes)} matching nodes")
-                st.write("Sample of filtered nodes:")
-
-                # Create a DataFrame for better visualization
-                filtered_data = []
-                for node in filtered_nodes[:10]:  # Show first 10 nodes
-                    node_data = st.session_state.G.nodes[node]
-                    filtered_data.append({
-                        'Node ID': node,
-                        **{k: v for k, v in node_data.items() if k != 'type'}
-                    })
-
-                if filtered_data:
-                    st.dataframe(pd.DataFrame(filtered_data))
-
-    with subgraph_tab:
-        st.subheader("Subgraph Analysis")
-
-        # Node selection for subgraph analysis
-        selected_start_type = st.selectbox("Select Starting Node Type", node_types, key="subgraph_type")
-        start_nodes = [n for n, d in st.session_state.G.nodes(data=True)
-                       if d.get('type') == selected_start_type]
-
-        selected_start_node = st.selectbox("Select Starting Node", start_nodes)
-
-        # Subgraph parameters
-        hop_count = st.slider("Number of Hops", 1, 3, 1, key="subgraph_hops")
-
-        # Filter node types to include
-        include_types = st.multiselect("Include Node Types", node_types, default=node_types)
-
-        if st.button("Extract Subgraph"):
-            # Get n-hop neighborhood
-            neighborhood = get_n_hop_neighbors(st.session_state.G, selected_start_node, hop_count)
-            neighborhood.add(selected_start_node)  # Include the starting node
-
-            # Filter by node types
-            filtered_nodes = [n for n in neighborhood
-                              if st.session_state.G.nodes[n].get('type') in include_types]
-
-            # Create subgraph
-            subgraph = st.session_state.G.subgraph(filtered_nodes)
-
-            # Display subgraph statistics
-            st.write(f"Subgraph Statistics:")
-            st.write(f"- Nodes: {subgraph.number_of_nodes()}")
-            st.write(f"- Edges: {subgraph.number_of_edges()}")
-
-
-
+            if filtered_data:
+                st.dataframe(pd.DataFrame(filtered_data))
 
 
 def get_n_hop_neighbors(G: nx.Graph, node: str, n: int) -> set:
