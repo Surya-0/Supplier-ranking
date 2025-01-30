@@ -1,4 +1,3 @@
-### query_explorer.py
 import streamlit as st
 import networkx as nx
 import plotly.graph_objects as go
@@ -7,7 +6,7 @@ import pandas as pd
 from typing import List, Dict, Any
 
 
-def app():
+def show():
     st.title("🔍 Supply Chain Query Explorer")
 
     # Initialize supply chain graph
@@ -17,8 +16,8 @@ def app():
     # Sidebar configuration
     st.sidebar.header("Query Configuration")
     base_url = st.sidebar.text_input("Base URL", value="http://localhost:8000")
-    version = st.sidebar.text_input("Version", value="v2")
-    timestamp = st.sidebar.text_input("Timestamp", value="3")
+    version = st.sidebar.text_input("Version", value="test-v1")
+    timestamp = st.sidebar.text_input("Timestamp", value="1")
 
     if st.sidebar.button("Load Data"):
         with st.spinner("Fetching data..."):
@@ -29,7 +28,7 @@ def app():
             else:
                 st.error("Failed to fetch data. Please check your connection and parameters.")
 
-    if 'G' in st.session_state:
+    if 'G' in st.session_state and st.session_state.G is not None:
         # Create tabs for different query types
         query_tab, path_tab, metrics_tab = st.tabs(["Node Query", "Path Explorer", "Advanced Metrics"])
 
@@ -41,6 +40,8 @@ def app():
 
         with metrics_tab:
             display_advanced_metrics()
+    else:
+        st.warning("Please load the data to start querying.")
 
 
 def display_node_query_interface():
@@ -67,37 +68,50 @@ def display_node_query_interface():
             node_attrs = st.session_state.G.nodes[selected_node]
             st.json(node_attrs)
 
-            # Neighborhood exploration
-            st.subheader("Neighborhood Explorer")
-            max_hops = st.slider("Maximum Hops", 1, 3, 1)
+            # Neighborhood exploration options
+            st.subheader("Neighborhood Explorer Options")
+            exploration_mode = st.radio("Choose Neighborhood Exploration Mode",
+                                        ["All nodes up to N hops", "Only nodes at exact N hops"])
 
-            # Get and filter neighbors
-            neighbors = get_n_hop_neighbors(st.session_state.G, selected_node, max_hops)
+            # Maximum hops input
+            max_hops = st.slider("Select Hop Distance", 1, 3, 1)
+
+            if exploration_mode == "All nodes up to N hops":
+                # Option 1: Show all nodes up to `max_hops` using get_n_hop_neighbors
+                neighbors = get_n_hop_neighbors(st.session_state.G, selected_node, max_hops)
+            else:
+                # Option 2: Show only nodes at `max_hops` using get_exact_n_hop_neighbors
+                neighbors = get_exact_hop_neighbors(st.session_state.G, selected_node, max_hops)
 
             # Display neighbor filtering options
-            neighbor_types = list(set(nx.get_node_attributes(st.session_state.G.subgraph(neighbors), 'type').values()))
-            selected_neighbor_type = st.multiselect("Filter Neighbors by Type", neighbor_types)
+            if neighbors:
+                neighbor_types = list(
+                    set(nx.get_node_attributes(st.session_state.G.subgraph(neighbors), 'type').values()))
+                selected_neighbor_type = st.multiselect("Filter Neighbors by Type", neighbor_types)
 
-            # Filter and display neighbors
-            filtered_neighbors = filter_neighbors_by_type(
-                st.session_state.G,
-                neighbors,
-                selected_neighbor_type if selected_neighbor_type else neighbor_types
-            )
+                # Filter and display neighbors
+                filtered_neighbors = filter_neighbors_by_type(
+                    st.session_state.G,
+                    neighbors,
+                    selected_neighbor_type if selected_neighbor_type else neighbor_types
+                )
 
-            if filtered_neighbors:
-                st.write(f"Found {len(filtered_neighbors)} matching neighbors:")
-                for neighbor in filtered_neighbors:
-                    with st.expander(f"Neighbor: {neighbor}"):
-                        st.json(st.session_state.G.nodes[neighbor])
+                if filtered_neighbors:
+                    st.write(f"Found {len(filtered_neighbors)} matching neighbors at {max_hops} hop(s):")
+                    for neighbor in filtered_neighbors:
+                        with st.expander(f"Neighbor: {neighbor}"):
+                            st.json(st.session_state.G.nodes[neighbor])
 
-                        # Display edge attributes
-                        if st.session_state.G.has_edge(selected_node, neighbor):
-                            st.subheader("Edge Attributes (Outgoing)")
-                            st.json(st.session_state.G.edges[selected_node, neighbor])
-                        if st.session_state.G.has_edge(neighbor, selected_node):
-                            st.subheader("Edge Attributes (Incoming)")
-                            st.json(st.session_state.G.edges[neighbor, selected_node])
+                            # Display edge attributes (optimize by combining checks)
+                            if st.session_state.G.has_edge(selected_node, neighbor) or st.session_state.G.has_edge(
+                                    neighbor, selected_node):
+                                st.subheader("Edge Attributes")
+                                if st.session_state.G.has_edge(selected_node, neighbor):
+                                    st.json(st.session_state.G.edges[selected_node, neighbor])
+                                if st.session_state.G.has_edge(neighbor, selected_node):
+                                    st.json(st.session_state.G.edges[neighbor, selected_node])
+            else:
+                st.write(f"No neighbors found for the selected hop configuration.")
 
 
 def display_path_explorer():
@@ -144,49 +158,142 @@ def display_path_explorer():
                 st.warning("No paths found between selected nodes.")
         except nx.NetworkXNoPath:
             st.error("No path exists between selected nodes.")
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
 
 
 def display_advanced_metrics():
-    """Display advanced supply chain metrics"""
-    st.subheader("Advanced Supply Chain Metrics")
+    """Display advanced filtering and exploration metrics"""
+    st.subheader("Advanced Supply Chain Analysis")
 
-    # Calculate and display various network metrics
-    col1, col2 = st.columns(2)
+    # Create tabs for different analysis types
+    filter_tab, subgraph_tab = st.tabs(["Attribute Filtering", "Subgraph Analysis"])
 
-    with col1:
-        st.write("Network-Level Metrics")
-        metrics = calculate_network_metrics(st.session_state.G)
-        for metric, value in metrics.items():
-            st.metric(metric, value)
+    with filter_tab:
+        st.subheader("Node and Edge Filtering")
 
-    with col2:
-        st.write("Node-Type Distribution")
-        type_dist = calculate_node_type_distribution(st.session_state.G)
-        st.bar_chart(type_dist)
+        # Node type selection for filtering
+        node_types = list(set(nx.get_node_attributes(st.session_state.G, 'type').values()))
+        selected_node_type = st.selectbox("Select Node Type to Filter", node_types)
 
-    # Display critical path analysis
-    st.subheader("Critical Path Analysis")
-    critical_paths = analyze_critical_paths(st.session_state.G)
-    if critical_paths:
-        for path_type, paths in critical_paths.items():
-            with st.expander(f"{path_type} Paths"):
-                for path in paths:
-                    st.write(" → ".join(path))
+        # Get all possible node attributes for the selected type
+        sample_node = next(n for n, d in st.session_state.G.nodes(data=True)
+                           if d.get('type') == selected_node_type)
+        node_attributes = list(st.session_state.G.nodes[sample_node].keys())
+        node_attributes.remove('type')  # Remove type as it's already selected
+
+        if node_attributes:
+            # Node attribute filtering
+            st.write("Filter Nodes by Attributes")
+            selected_attr = st.selectbox("Select Attribute", node_attributes)
+
+            # Get unique values for the selected attribute
+            unique_values = set()
+            for _, attrs in st.session_state.G.nodes(data=True):
+                if attrs.get('type') == selected_node_type and selected_attr in attrs:
+                    unique_values.add(attrs[selected_attr])
+
+            # Create appropriate filter input based on attribute values
+            if all(isinstance(x, (int, float)) for x in unique_values if x is not None):
+                # Numeric filter
+                min_val = min(x for x in unique_values if x is not None)
+                max_val = max(x for x in unique_values if x is not None)
+                filter_value = st.slider(f"Filter by {selected_attr}",
+                                         float(min_val), float(max_val),
+                                         (float(min_val), float(max_val)))
+
+                filtered_nodes = [n for n, d in st.session_state.G.nodes(data=True)
+                                  if d.get('type') == selected_node_type
+                                  and d.get(selected_attr) is not None
+                                  and filter_value[0] <= float(d[selected_attr]) <= filter_value[1]]
+            else:
+                # Categorical filter
+                filter_value = st.multiselect(f"Select {selected_attr}", list(unique_values))
+                filtered_nodes = [n for n, d in st.session_state.G.nodes(data=True)
+                                  if d.get('type') == selected_node_type
+                                  and d.get(selected_attr) in filter_value]
+
+            if filtered_nodes:
+                st.write(f"Found {len(filtered_nodes)} matching nodes")
+                st.write("Sample of filtered nodes:")
+
+                # Create a DataFrame for better visualization
+                filtered_data = []
+                for node in filtered_nodes[:10]:  # Show first 10 nodes
+                    node_data = st.session_state.G.nodes[node]
+                    filtered_data.append({
+                        'Node ID': node,
+                        **{k: v for k, v in node_data.items() if k != 'type'}
+                    })
+
+                if filtered_data:
+                    st.dataframe(pd.DataFrame(filtered_data))
+
+    with subgraph_tab:
+        st.subheader("Subgraph Analysis")
+
+        # Node selection for subgraph analysis
+        selected_start_type = st.selectbox("Select Starting Node Type", node_types, key="subgraph_type")
+        start_nodes = [n for n, d in st.session_state.G.nodes(data=True)
+                       if d.get('type') == selected_start_type]
+
+        selected_start_node = st.selectbox("Select Starting Node", start_nodes)
+
+        # Subgraph parameters
+        hop_count = st.slider("Number of Hops", 1, 3, 1, key="subgraph_hops")
+
+        # Filter node types to include
+        include_types = st.multiselect("Include Node Types", node_types, default=node_types)
+
+        if st.button("Extract Subgraph"):
+            # Get n-hop neighborhood
+            neighborhood = get_n_hop_neighbors(st.session_state.G, selected_start_node, hop_count)
+            neighborhood.add(selected_start_node)  # Include the starting node
+
+            # Filter by node types
+            filtered_nodes = [n for n in neighborhood
+                              if st.session_state.G.nodes[n].get('type') in include_types]
+
+            # Create subgraph
+            subgraph = st.session_state.G.subgraph(filtered_nodes)
+
+            # Display subgraph statistics
+            st.write(f"Subgraph Statistics:")
+            st.write(f"- Nodes: {subgraph.number_of_nodes()}")
+            st.write(f"- Edges: {subgraph.number_of_edges()}")
+
+
+
 
 
 def get_n_hop_neighbors(G: nx.Graph, node: str, n: int) -> set:
-    """Get all neighbors within n hops"""
-    neighbors = set()
-    current_neighbors = {node}
+    """Get all neighbors within n hops, excluding the node itself."""
+    if node not in G:
+        st.warning(f"Node {node} does not exist in the graph.")
+        return set()
 
-    for _ in range(n):
-        next_neighbors = set()
-        for current_node in current_neighbors:
-            next_neighbors.update(G.neighbors(current_node))
-        neighbors.update(next_neighbors)
-        current_neighbors = next_neighbors
+    # Use NetworkX function to get neighbors within n hops
+    neighbors = set(nx.single_source_shortest_path_length(G, node, cutoff=n).keys())
+
+    # Exclude the node itself from the neighbors set
+    neighbors.discard(node)
 
     return neighbors
+
+
+def get_exact_hop_neighbors(G: nx.Graph, node: str, hop: int) -> set:
+    """Get all neighbors exactly `hop` distance away from the node."""
+    if node not in G:
+        st.warning(f"Node {node} does not exist in the graph.")
+        return set()
+
+    # Get all nodes within hop distance using NetworkX
+    neighbors_with_hops = nx.single_source_shortest_path_length(G, node, cutoff=hop)
+
+    # Filter only the nodes that are exactly `hop` distance away
+    exact_hop_neighbors = {n for n, distance in neighbors_with_hops.items() if distance == hop}
+
+    return exact_hop_neighbors
 
 
 def filter_neighbors_by_type(G: nx.Graph, neighbors: set, types: List[str]) -> List[str]:
@@ -211,28 +318,29 @@ def calculate_node_type_distribution(G: nx.Graph) -> pd.Series:
 
 
 def analyze_critical_paths(G: nx.Graph) -> Dict[str, List[List[str]]]:
-    """Analyze critical paths in the supply chain"""
+    """Analyze critical paths in the supply chain that go through parts"""
     critical_paths = {
-        "Supplier to Warehouse": [],
-        "Critical Parts": []
+        "Supplier to Warehouse": []
     }
 
-    # Find paths from suppliers to warehouses
+    # Find paths from suppliers to warehouses via parts
     suppliers = [n for n, d in G.nodes(data=True) if d.get('type') == 'supplier']
     warehouses = [n for n, d in G.nodes(data=True) if d.get('type') == 'warehouse']
 
-    # Sample a few paths for demonstration
-    for s in suppliers[:3]:
-        for w in warehouses[:3]:
-            try:
-                path = nx.shortest_path(G, s, w)
-                if path:
-                    critical_paths["Supplier to Warehouse"].append(path)
-            except nx.NetworkXNoPath:
-                continue
+    # Look for paths that go from Supplier -> Part -> Warehouse
+    for supplier in suppliers:
+        # Find all parts connected to this supplier
+        supplier_to_part_paths = []
+        for part in G.predecessors(supplier):  # Parts connected to the supplier
+            if G.nodes[part].get('type') == 'part':
+                # Find all warehouses connected to this part
+                for warehouse in G.successors(part):
+                    if G.nodes[warehouse].get('type') == 'warehouse':
+                        # Record the path Supplier -> Part -> Warehouse
+                        critical_paths["Supplier to Warehouse"].append([supplier, part, warehouse])
 
     return critical_paths
 
 
 if __name__ == "__main__":
-    app()
+    show()

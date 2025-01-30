@@ -14,7 +14,7 @@ import streamlit.components.v1 as components
 import time
 import os
 import random
-import query_explorer
+import query_explorer,query_main
 
 # Set page configuration
 st.set_page_config(
@@ -70,8 +70,8 @@ def dashboard_page():
     # Sidebar configuration
     st.sidebar.header("Configuration")
     base_url = st.sidebar.text_input("Base URL", value="http://localhost:8000")
-    version = st.sidebar.text_input("Version", value="v2")
-    timestamp = st.sidebar.text_input("Timestamp", value="3")
+    version = st.sidebar.text_input("Version", value="test-v1")
+    timestamp = st.sidebar.text_input("Timestamp", value="1")
 
     # Add max nodes slider
     max_nodes = st.sidebar.slider("Maximum nodes to display", 10, 200, 50)
@@ -228,7 +228,8 @@ def main():
     st.sidebar.title("Navigation")
     pages = {
         "Dashboard": dashboard_page,
-        "Query Explorer": query_explorer.app
+        "Query Explorer": query_explorer.show,
+        "Query Viz" : query_main.call
     }
 
     # Add page selection

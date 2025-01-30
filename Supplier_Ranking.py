@@ -76,35 +76,159 @@ class SupplyChainGraph:
 
         return self.G
 
+
+    def create_query_subgraph(
+        self,
+        source_node_types: List[str] = None,
+        source_node_ids: List[str] = None,
+        n_hops: int = 2,
+        target_node_types: List[str] = None,
+        target_node_ids: List[str] = None,
+    ) -> nx.Graph:
+        """
+        Create a subgraph based on query parameters.
+        """
+        if not any(
+            [source_node_types, source_node_ids, target_node_types, target_node_ids]
+        ):
+            return self.G  # Return full graph if no query parameters
+
+        # Initialize result graph
+        result_graph = nx.Graph()
+
+        # Get source nodes
+        source_nodes = set()
+        if source_node_ids:
+            # If specific nodes are selected, only use those
+            source_nodes.update(source_node_ids)
+        elif source_node_types:
+            # Only use all nodes of a type if no specific nodes were selected
+            source_nodes.update(
+                [
+                    n
+                    for n, d in self.G.nodes(data=True)
+                    if d.get("type") in source_node_types
+                ]
+            )
+
+        # Add source nodes to the result graph with their attributes
+        for node in source_nodes:
+            if node in self.G:
+                result_graph.add_node(node, **self.G.nodes[node])
+
+        # Keep track of nodes at each hop level and all visited nodes
+        current_level_nodes = source_nodes
+        visited_nodes = set(source_nodes)
+
+        # For each hop
+        for _ in range(n_hops):
+            next_level_nodes = set()
+
+            # Process current level nodes
+            for node in current_level_nodes:
+                if node not in self.G:
+                    continue
+
+                # Get neighbors (undirected)
+                neighbors = set(self.G.neighbors(node))
+                new_neighbors = neighbors - visited_nodes
+
+                # Add new neighbors and their edges
+                for neighbor in new_neighbors:
+                    # Add the neighbor node
+                    result_graph.add_node(neighbor, **self.G.nodes[neighbor])
+                    # Add the edge (undirected)
+                    result_graph.add_edge(
+                        node, neighbor, **self.G.edges[node, neighbor]
+                    )
+
+                next_level_nodes.update(new_neighbors)
+
+            # Update visited nodes and prepare for next hop
+            visited_nodes.update(next_level_nodes)
+            current_level_nodes = next_level_nodes
+
+            # If no new nodes were found, stop early
+            if not next_level_nodes:
+                break
+
+        # Filter nodes based on target criteria if specified
+        if target_node_ids or target_node_types:
+            nodes_to_keep = set(source_nodes)  # Always keep source nodes
+
+            if target_node_ids:
+                # Keep only specified target nodes that we've reached
+                nodes_to_keep.update(
+                    n for n in result_graph.nodes() if n in target_node_ids
+                )
+            elif target_node_types:
+                # Keep only nodes of target types that we've reached
+                nodes_to_keep.update(
+                    n
+                    for n in result_graph.nodes()
+                    if result_graph.nodes[n].get("type") in target_node_types
+                )
+
+            # Create new graph with only the filtered nodes and their edges
+            result_graph = result_graph.subgraph(nodes_to_keep).copy()
+
+        return result_graph
+
     def calculate_structural_metrics(self) -> Dict[str, Dict[str, float]]:
         """
         Calculate structural metrics for supplier ranking
         """
+        metrics = {}
+
+        # Get suppliers from the current graph
         suppliers = [
             n for n, d in self.G.nodes(data=True) if d.get("type") == "supplier"
         ]
 
-        metrics = {}
-        for supplier in suppliers:
-            # Calculate various centrality measures
-            in_degree = self.G.in_degree(supplier)
-            out_degree = self.G.out_degree(supplier)
-            betweenness = nx.betweenness_centrality(self.G)[supplier]
-            try:
-                eigenvector = nx.eigenvector_centrality_numpy(self.G)[supplier]
-            except:
-                # Set eigenvector centrality to 0 for disconnected graphs
-                eigenvector = 0
+        if not suppliers:
+            return metrics
 
+        # Calculate degree for undirected graph
+        degree = dict(self.G.degree())
+
+        try:
+            # Calculate betweenness centrality
+            betweenness_dict = nx.betweenness_centrality(self.G, normalized=True)
+
+            # Calculate eigenvector centrality for each component
+            eigenvector_dict = {}
+            components = list(nx.connected_components(self.G))
+
+            for component in components:
+                subgraph = self.G.subgraph(component)
+                try:
+                    # Try to calculate eigenvector centrality for the component
+                    component_eigenvector = nx.eigenvector_centrality(
+                        subgraph, max_iter=1000
+                    )
+                    # Scale the values by component size
+                    scale_factor = len(component) / len(self.G)
+                    for node, value in component_eigenvector.items():
+                        eigenvector_dict[node] = value * scale_factor
+                except:
+                    # If calculation fails, use degree centrality as fallback
+                    component_degree = nx.degree_centrality(subgraph)
+                    for node, value in component_degree.items():
+                        eigenvector_dict[node] = value * scale_factor
+
+        except Exception as e:
+            print(f"Error calculating centrality metrics: {e}")
+            # Fallback to simpler metrics if calculation fails
+            betweenness_dict = nx.degree_centrality(self.G)
+            eigenvector_dict = nx.degree_centrality(self.G)
+
+        # Combine all metrics for each supplier
+        for supplier in suppliers:
             metrics[supplier] = {
-                "in_degree": in_degree,
-                "out_degree": out_degree,
-                "betweenness": betweenness,
-                "eigenvector": eigenvector,
+                "degree": degree.get(supplier, 0),  # Single degree for undirected graph
+                "betweenness": betweenness_dict.get(supplier, 0),
+                "eigenvector": eigenvector_dict.get(supplier, 0),
             }
-            #
-            # if supplier == 'supplier_1002656':
-            #     print("The metrics for the supplier is : ",metrics)
 
         return metrics
 
@@ -201,54 +325,4 @@ class SupplyChainGraph:
 
 
 # Example usage
-def main():
-    # Initialize the supply chain graph
-    scg = SupplyChainGraph()
 
-    # Fetch data (replace with your actual base URL, version, and timestamp)
-    data = scg.fetch_data(base_url="http://localhost:8000", version="v2", timestamp="3")
-
-    if data:
-        # Build the graph
-        G = scg.build_graph()
-
-        # Check if the node exists in the graph
-        if "supplier_1002656" in G:
-            print(G.nodes["supplier_1002656"])
-        else:
-            print("Node 'supplier_1002656' does not exist in the graph.")
-        # print(G.nodes," ",len(G.nodes))
-
-        # Check if the node exists in the graph
-        node_id = "supplier_1002656"
-        if node_id in G:
-            # Get incoming edges
-            incoming_edges = G.in_edges(node_id, data=True)
-            print(f"Incoming edges for {node_id}:")
-            for edge in incoming_edges:
-                print(edge)
-
-            # Get outgoing edges
-            outgoing_edges = G.out_edges(node_id, data=True)
-            print(f"Outgoing edges for {node_id}:")
-            for edge in outgoing_edges:
-                print(edge)
-        else:
-            print(f"Node '{node_id}' does not exist in the graph.")
-
-        # Calculate final ranking with custom weights
-        ranking = scg.calculate_final_ranking(
-            structural_weight=0.6,  # Give more weight to structural metrics
-            attribute_weight=0.4,  # Give less weight to attribute metrics
-        )
-
-        # Print the results
-        print("\nSupplier Rankings:")
-        print(ranking.to_string(index=False))
-
-        # Optional: Save rankings to CSV
-        ranking.to_csv("supplier_rankings.csv", index=False)
-
-
-if __name__ == "__main__":
-    main()
