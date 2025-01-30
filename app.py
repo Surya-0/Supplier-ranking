@@ -11,7 +11,6 @@ from networkx.drawing.layout import spring_layout
 from Supplier_Ranking import SupplyChainGraph
 from pyvis.network import Network
 import streamlit.components.v1 as components
-import time
 import os
 import random
 import query_explorer,query_main
