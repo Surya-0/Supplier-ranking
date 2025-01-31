@@ -37,7 +37,7 @@ def display_graph(G: nx.Graph, timestamp: str = "", max_nodes: int = 50):
                 vis_graph.add_edge(node, neighbor, **G.edges[node, neighbor])
 
     # Create and configure the pyvis network
-    net = Network(notebook=True, height="500px", width="100%")
+    net = Network(notebook=True, height="500px", width="100%", cdn_resources="in_line")
 
     # Define fixed colors for node types
     node_colors = {
@@ -243,46 +243,61 @@ def create_network_visualization(G):
     return fig
 
 
-def create_ranking_table_and_heatmap(ranking_df):
+def create_ranking_table_and_heatmap(G: nx.Graph):
     """Create both a table and heatmap visualization of supplier rankings"""
-    # Define the metrics with better labels
-    metrics = {
-        "degree": "Total Connections",
-        "betweenness": "Centrality Score",
-        "eigenvector": "Network Influence",
-    }
 
-    # Create a copy of the dataframe with formatted column names for display
+    # Add weight slider
+    attribute_weight = st.slider(
+        "Attribute Weight",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.5,
+        step=0.1,
+        help="Weight given to supplier attributes. Structural weight will be (1 - attribute_weight)",
+    )
+    structural_weight = 1 - attribute_weight
+
+    # Create a SupplyChainGraph instance for calculations
+    scg = SupplyChainGraph()
+    scg.G = G
+
+    # Calculate final ranking using the weights
+    ranking_df = scg.calculate_final_ranking(
+        structural_weight=structural_weight, attribute_weight=attribute_weight
+    )
+
+    # Display the ranking results
+    st.subheader("Supplier Rankings")
+
+    # Format the dataframe for display
     display_df = ranking_df.copy()
-    display_df.columns = [metrics[col] for col in display_df.columns]
-    display_df.index = [f"Supplier {s.split('_')[-1]}" for s in display_df.index]
-
-    # Round the values for better display
+    display_df["Supplier"] = [
+        f"Supplier {s.split('_')[-1]}" for s in display_df["Supplier"]
+    ]
     display_df = display_df.round(4)
 
     # Show the table with formatted values
-    st.subheader("Supplier Rankings Table")
     st.dataframe(
         display_df,
         use_container_width=True,
-        hide_index=False,
+        hide_index=True,
         column_config={
-            "Total Connections": st.column_config.NumberColumn(
-                help="Total number of direct connections to other nodes", format="%d"
-            ),
-            "Centrality Score": st.column_config.NumberColumn(
-                help="Supplier's importance in connecting different parts of the network",
+            "Supplier": st.column_config.TextColumn(help="Supplier identifier"),
+            "Final Score": st.column_config.NumberColumn(
+                help=f"Combined score (Structural: {structural_weight:.1f}, Attribute: {attribute_weight:.1f})",
                 format="%.4f",
             ),
-            "Network Influence": st.column_config.NumberColumn(
-                help="Overall influence based on connections to other important nodes",
-                format="%.4f",
+            "Structural Score": st.column_config.NumberColumn(
+                help="Score based on network position and connectivity", format="%.4f"
+            ),
+            "Attribute Score": st.column_config.NumberColumn(
+                help="Score based on supplier attributes", format="%.4f"
             ),
         },
     )
 
     # Add download button for the table
-    csv = display_df.to_csv()
+    csv = display_df.to_csv(index=False)
     st.download_button(
         label="Download Rankings as CSV",
         data=csv,
@@ -292,9 +307,33 @@ def create_ranking_table_and_heatmap(ranking_df):
 
     st.markdown("---")
 
-    # Create normalized scores for heatmap visualization
-    normalized_scores = ranking_df[list(metrics.keys())].copy()
-    for col in metrics.keys():
+    # Create heatmap visualization
+    st.subheader("Supplier Performance Heatmap")
+
+    # Remove default padding around charts
+    st.markdown("""
+        <style>
+            [data-testid="stPlotlyChart"] {
+                padding: 0;
+                border: none;
+            }
+            [data-testid="stPlotlyChart"] > div {
+                padding: 0 !important;
+                border: none !important;
+            }
+            .js-plotly-plot {
+                padding: 0 !important;
+                border: none !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Prepare data for heatmap
+    heatmap_df = display_df.set_index("Supplier")
+
+    # Normalize scores for heatmap
+    normalized_scores = heatmap_df.copy()
+    for col in normalized_scores.columns:
         if normalized_scores[col].max() != normalized_scores[col].min():
             normalized_scores[col] = (
                 normalized_scores[col] - normalized_scores[col].min()
@@ -302,29 +341,12 @@ def create_ranking_table_and_heatmap(ranking_df):
         else:
             normalized_scores[col] = 1  # If all values are the same
 
-    # Format supplier IDs to be more readable
-    supplier_labels = [f"Supplier {s.split('_')[-1]}" for s in normalized_scores.index]
-
-    st.subheader("Supplier Rankings Heatmap")
-
-    # Add custom CSS to remove padding
-    st.markdown(
-        """
-        <style>
-        [data-testid="stPlotlyChart"] {
-            margin: 0;
-            padding: 0;
-        }
-        </style>
-    """,
-        unsafe_allow_html=True,
-    )
-
+    # Create heatmap
     fig = go.Figure(
         data=go.Heatmap(
             z=normalized_scores.values.T,
-            x=supplier_labels,
-            y=list(metrics.values()),
+            x=normalized_scores.index,
+            y=normalized_scores.columns,
             colorscale="Viridis",
             hoverongaps=False,
             showscale=True,
@@ -345,20 +367,22 @@ def create_ranking_table_and_heatmap(ranking_df):
         height=500,
         xaxis={
             "tickangle": -45,
-            "showline": False,
-            "showgrid": False,
-            "zeroline": False,
+            "showline": True,
+            "showgrid": True,
+            "zeroline": True,
+            "gridcolor": "rgba(128, 128, 128, 0.2)",
+            "linecolor": "rgba(128, 128, 128, 0.2)",
         },
         yaxis={
             "side": "left",
-            "showline": False,
-            "showgrid": False,
-            "zeroline": False,
+            "showline": True,
+            "showgrid": True,
+            "zeroline": True,
+            "gridcolor": "rgba(128, 128, 128, 0.2)",
+            "linecolor": "rgba(128, 128, 128, 0.2)",
         },
-        margin={"l": 150, "r": 50, "t": 80, "b": 100, "pad": 0, "autoexpand": True},
-        # paper_bgcolor="rgba(0,0,0,0)",
-        # plot_bgcolor="rgba(0,0,0,0)",
         autosize=True,
+        margin=dict(t=50, l=80, r=20, b=80, pad=0),
     )
 
     st.plotly_chart(
@@ -371,9 +395,9 @@ def create_ranking_table_and_heatmap(ranking_df):
     st.markdown(
         """
     ### Metrics Explanation
-    - **Total Connections**: Number of direct connections to other nodes (parts, warehouses, etc.)
-    - **Centrality Score**: Supplier's importance in connecting different parts of the network
-    - **Network Influence**: Overall influence based on connections to other important nodes
+    - **Final Score**: Combined score based on both structural and attribute metrics
+    - **Structural Score**: Score based on the supplier's position and connectivity in the network
+    - **Attribute Score**: Score based on supplier-specific attributes and performance metrics
 
     *Values in the heatmap are normalized to a 0-1 scale for easy comparison*
     """
@@ -551,7 +575,8 @@ def call():
 
                 # Create ranking visualization
                 ranking_df = pd.DataFrame.from_dict(metrics, orient="index")
-                create_ranking_table_and_heatmap(ranking_df)
+
+                create_ranking_table_and_heatmap(current_graph)
             else:
                 st.info("No suppliers present in the selected subgraph to rank.")
     else:

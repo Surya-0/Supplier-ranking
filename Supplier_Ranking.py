@@ -76,7 +76,6 @@ class SupplyChainGraph:
 
         return self.G
 
-
     def create_query_subgraph(
         self,
         source_node_types: List[str] = None,
@@ -93,6 +92,8 @@ class SupplyChainGraph:
         ):
             return self.G  # Return full graph if no query parameters
 
+        undirected = self.G.to_undirected()
+
         # Initialize result graph
         result_graph = nx.Graph()
 
@@ -106,41 +107,35 @@ class SupplyChainGraph:
             source_nodes.update(
                 [
                     n
-                    for n, d in self.G.nodes(data=True)
+                    for n, d in undirected.nodes(data=True)
                     if d.get("type") in source_node_types
                 ]
             )
 
         # Add source nodes to the result graph with their attributes
         for node in source_nodes:
-            if node in self.G:
-                result_graph.add_node(node, **self.G.nodes[node])
+            if node in undirected:
+                result_graph.add_node(node, **undirected.nodes[node])
 
         # Keep track of nodes at each hop level and all visited nodes
         current_level_nodes = source_nodes
         visited_nodes = set(source_nodes)
 
         # For each hop
-        for _ in range(n_hops):
+        for i in range(n_hops):
+            print(f"Processing hop {i+1}...", visited_nodes)
             next_level_nodes = set()
 
             # Process current level nodes
             for node in current_level_nodes:
-                if node not in self.G:
+                if node not in undirected:
                     continue
 
                 # Get neighbors (undirected)
-                neighbors = set(self.G.neighbors(node))
+                neighbors = set(undirected.neighbors(node))
                 new_neighbors = neighbors - visited_nodes
 
-                # Add new neighbors and their edges
-                for neighbor in new_neighbors:
-                    # Add the neighbor node
-                    result_graph.add_node(neighbor, **self.G.nodes[neighbor])
-                    # Add the edge (undirected)
-                    result_graph.add_edge(
-                        node, neighbor, **self.G.edges[node, neighbor]
-                    )
+                print(f"  - Node {node}: {neighbors} -> {new_neighbors}")
 
                 next_level_nodes.update(new_neighbors)
 
@@ -151,6 +146,8 @@ class SupplyChainGraph:
             # If no new nodes were found, stop early
             if not next_level_nodes:
                 break
+
+        result_graph = undirected.subgraph(visited_nodes).copy()
 
         # Filter nodes based on target criteria if specified
         if target_node_ids or target_node_types:
@@ -172,7 +169,7 @@ class SupplyChainGraph:
             # Create new graph with only the filtered nodes and their edges
             result_graph = result_graph.subgraph(nodes_to_keep).copy()
 
-        return result_graph
+        return result_graph  # Return the filtered graph instead of creating a new one
 
     def calculate_structural_metrics(self) -> Dict[str, Dict[str, float]]:
         """
@@ -188,26 +185,29 @@ class SupplyChainGraph:
         if not suppliers:
             return metrics
 
+        # Convert to undirected graph for centrality calculations
+        undirected_G = self.G.to_undirected()
+
         # Calculate degree for undirected graph
-        degree = dict(self.G.degree())
+        degree = dict(undirected_G.degree())
 
         try:
             # Calculate betweenness centrality
-            betweenness_dict = nx.betweenness_centrality(self.G, normalized=True)
+            betweenness_dict = nx.betweenness_centrality(undirected_G, normalized=True)
 
             # Calculate eigenvector centrality for each component
             eigenvector_dict = {}
-            components = list(nx.connected_components(self.G))
+            components = list(nx.connected_components(undirected_G))
 
             for component in components:
-                subgraph = self.G.subgraph(component)
+                subgraph = undirected_G.subgraph(component)
                 try:
                     # Try to calculate eigenvector centrality for the component
                     component_eigenvector = nx.eigenvector_centrality(
                         subgraph, max_iter=1000
                     )
                     # Scale the values by component size
-                    scale_factor = len(component) / len(self.G)
+                    scale_factor = len(component) / len(undirected_G)
                     for node, value in component_eigenvector.items():
                         eigenvector_dict[node] = value * scale_factor
                 except:
@@ -219,8 +219,8 @@ class SupplyChainGraph:
         except Exception as e:
             print(f"Error calculating centrality metrics: {e}")
             # Fallback to simpler metrics if calculation fails
-            betweenness_dict = nx.degree_centrality(self.G)
-            eigenvector_dict = nx.degree_centrality(self.G)
+            betweenness_dict = nx.degree_centrality(undirected_G)
+            eigenvector_dict = nx.degree_centrality(undirected_G)
 
         # Combine all metrics for each supplier
         for supplier in suppliers:
@@ -325,4 +325,3 @@ class SupplyChainGraph:
 
 
 # Example usage
-
