@@ -468,12 +468,63 @@ def call():
                 # Sort nodes for better readability
                 source_nodes.sort()
 
-            source_node_ids = st.multiselect(
-                "Source Node IDs (optional)",
-                options=source_nodes,
-                default=None,
-                help="Optionally select specific nodes of the chosen types",
-            )
+            use_filtering = st.checkbox("Use Filtering", value=False)
+
+            source_node_ids = None
+            if not use_filtering:
+                source_node_ids = st.multiselect(
+                    "Source Node IDs (optional)",
+                    options=source_nodes,
+                    default=None,
+                    help="Optionally select specific nodes of the chosen types",
+                )
+
+            else:
+                if len(source_node_types) > 1:
+                    st.warning(
+                        "Please select only one node type for filtering to work."
+                    )
+                else:
+                    selected_node_type = source_node_types[0]  # We know there's only one type due to warning above
+                    
+                    # Get all possible node attributes for the selected type
+                    sample_node = next(n for n, d in st.session_state.G.nodes(data=True)
+                                   if d.get('type') == selected_node_type)
+                    node_attributes = list(st.session_state.G.nodes[sample_node].keys())
+                    node_attributes.remove('type')  # Remove type as it's already selected
+
+                    if node_attributes:
+                        # Node attribute filtering
+                        selected_attr = st.selectbox("Select Attribute to Filter By", node_attributes)
+
+                        # Get unique values for the selected attribute
+                        unique_values = set()
+                        for _, attrs in st.session_state.G.nodes(data=True):
+                            if attrs.get('type') == selected_node_type and selected_attr in attrs:
+                                unique_values.add(attrs[selected_attr])
+
+                        # Create appropriate filter input based on attribute values
+                        if all(isinstance(x, (int, float)) for x in unique_values if x is not None):
+                            # Numeric filter
+                            min_val = min(x for x in unique_values if x is not None)
+                            max_val = max(x for x in unique_values if x is not None)
+                            filter_value = st.slider(f"Filter by {selected_attr}",
+                                                 float(min_val), float(max_val),
+                                                 (float(min_val), float(max_val)))
+
+                            source_node_ids = [n for n, d in st.session_state.G.nodes(data=True)
+                                          if d.get('type') == selected_node_type
+                                          and d.get(selected_attr) is not None
+                                          and filter_value[0] <= float(d[selected_attr]) <= filter_value[1]]
+                        else:
+                            # Categorical filter
+                            filter_value = st.multiselect(f"Select {selected_attr} Values", list(unique_values))
+                            source_node_ids = [n for n, d in st.session_state.G.nodes(data=True)
+                                          if d.get('type') == selected_node_type
+                                          and d.get(selected_attr) in filter_value]
+
+                        if source_node_ids:
+                            st.write(f"Found {len(source_node_ids)} matching nodes")
 
             # Number of hops
             n_hops = st.slider(
