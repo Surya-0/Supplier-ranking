@@ -147,7 +147,7 @@ class SupplyChainGraph:
             if not next_level_nodes:
                 break
 
-        result_graph = undirected.subgraph(visited_nodes).copy()
+        result_graph = self.G.subgraph(visited_nodes).copy()
 
         # Filter nodes based on target criteria if specified
         if target_node_ids or target_node_types:
@@ -173,7 +173,7 @@ class SupplyChainGraph:
 
     def calculate_structural_metrics(self) -> Dict[str, Dict[str, float]]:
         """
-        Calculate structural metrics for supplier ranking
+        Calculate structural metrics for supplier ranking using directed graph metrics
         """
         metrics = {}
 
@@ -185,47 +185,46 @@ class SupplyChainGraph:
         if not suppliers:
             return metrics
 
-        # Convert to undirected graph for centrality calculations
-        undirected_G = self.G.to_undirected()
-
-        # Calculate degree for undirected graph
-        degree = dict(undirected_G.degree())
+        # Calculate in-degree and out-degree for directed graph
+        in_degree = dict(self.G.in_degree())
+        out_degree = dict(self.G.out_degree())
 
         try:
-            # Calculate betweenness centrality
-            betweenness_dict = nx.betweenness_centrality(undirected_G, normalized=True)
+            # Calculate directed betweenness centrality
+            betweenness_dict = nx.betweenness_centrality(self.G, normalized=True)
 
-            # Calculate eigenvector centrality for each component
+            # Calculate eigenvector centrality for each strongly connected component
             eigenvector_dict = {}
-            components = list(nx.connected_components(undirected_G))
+            components = list(nx.strongly_connected_components(self.G))
 
             for component in components:
-                subgraph = undirected_G.subgraph(component)
+                subgraph = self.G.subgraph(component)
                 try:
                     # Try to calculate eigenvector centrality for the component
                     component_eigenvector = nx.eigenvector_centrality(
                         subgraph, max_iter=1000
                     )
                     # Scale the values by component size
-                    scale_factor = len(component) / len(undirected_G)
+                    scale_factor = len(component) / len(self.G)
                     for node, value in component_eigenvector.items():
                         eigenvector_dict[node] = value * scale_factor
                 except:
-                    # If calculation fails, use degree centrality as fallback
-                    component_degree = nx.degree_centrality(subgraph)
+                    # If calculation fails, use in-degree centrality as fallback
+                    component_degree = nx.in_degree_centrality(subgraph)
                     for node, value in component_degree.items():
                         eigenvector_dict[node] = value * scale_factor
 
         except Exception as e:
             print(f"Error calculating centrality metrics: {e}")
             # Fallback to simpler metrics if calculation fails
-            betweenness_dict = nx.degree_centrality(undirected_G)
-            eigenvector_dict = nx.degree_centrality(undirected_G)
+            betweenness_dict = nx.in_degree_centrality(self.G)
+            eigenvector_dict = nx.in_degree_centrality(self.G)
 
         # Combine all metrics for each supplier
         for supplier in suppliers:
             metrics[supplier] = {
-                "degree": degree.get(supplier, 0),  # Single degree for undirected graph
+                "in_degree": in_degree.get(supplier, 0),  # Number of incoming connections
+                "out_degree": out_degree.get(supplier, 0),  # Number of outgoing connections
                 "betweenness": betweenness_dict.get(supplier, 0),
                 "eigenvector": eigenvector_dict.get(supplier, 0),
             }
