@@ -311,7 +311,8 @@ def create_ranking_table_and_heatmap(G: nx.Graph):
     st.subheader("Supplier Performance Heatmap")
 
     # Remove default padding around charts
-    st.markdown("""
+    st.markdown(
+        """
         <style>
             [data-testid="stPlotlyChart"] {
                 padding: 0;
@@ -326,7 +327,9 @@ def create_ranking_table_and_heatmap(G: nx.Graph):
                 border: none !important;
             }
         </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     # Prepare data for heatmap
     heatmap_df = display_df.set_index("Supplier")

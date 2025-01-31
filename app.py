@@ -68,18 +68,22 @@ def dashboard_page():
     st.title("Supplier Ranking Analysis")
 
     # Sidebar configuration
-    st.sidebar.header("Configuration")
-    base_url = st.sidebar.text_input("Base URL", value="http://localhost:8000")
-    version = st.sidebar.text_input("Version", value="test-v1")
-    timestamp = st.sidebar.text_input("Timestamp", value="1")
+    with st.sidebar:
+        st.header("Data Configuration")
 
-    # Add max nodes slider
-    max_nodes = st.sidebar.slider("Maximum nodes to display", 10, 200, 50)
+        # Use API_HOST environment variable or default to localhost
+        default_host = os.getenv("API_HOST", "localhost")
+        base_url = st.text_input("Base URL", value=f"http://{default_host}:8000")
+        version = st.text_input("Version", value="test-v1")
+        timestamp = st.text_input("Timestamp", value="1")
 
-    structural_weight = st.sidebar.slider(
-        "Structural Weight", min_value=0.0, max_value=1.0, value=0.6, step=0.1
-    )
-    attribute_weight = 1 - structural_weight
+        # Add max nodes slider
+        max_nodes = st.slider("Maximum nodes to display", 10, 200, 50)
+
+        structural_weight = st.slider(
+            "Structural Weight", min_value=0.0, max_value=1.0, value=0.6, step=0.1
+        )
+        attribute_weight = 1 - structural_weight
 
     if st.sidebar.button("Run Analysis"):
         with st.spinner("Fetching data and performing analysis..."):
