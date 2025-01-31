@@ -9,8 +9,7 @@ import numpy as np
 
 class SupplyChainGraph:
     def __init__(self):
-        """Initialize an empty supply chain graph"""
-        self.G = nx.Graph()  # Using undirected graph
+        self.G = nx.DiGraph()
         self.raw_data = None
 
     def fetch_data(self, base_url: str, version: str, timestamp: str) -> Dict:
@@ -29,7 +28,7 @@ class SupplyChainGraph:
             print(f"Error fetching data: {e}")
             return None
 
-    def build_graph(self) -> nx.Graph:
+    def build_graph(self) -> nx.DiGraph:
         """
         Construct NetworkX graph from the JSON data
         """
@@ -76,6 +75,7 @@ class SupplyChainGraph:
                 )
 
         return self.G
+
 
     def create_query_subgraph(
         self,
@@ -243,7 +243,7 @@ class SupplyChainGraph:
         metrics = {}
         for supplier in suppliers:
             # Get all incoming edges (part to supplier relationships)
-            supplier_edges = self.G.edges(supplier, data=True)
+            supplier_edges = self.G.in_edges(supplier, data=True)
 
             # Calculate metrics based on edge attributes
             po_count = sum(edge.get("#PO", 0) for _, _, edge in supplier_edges)
@@ -325,54 +325,4 @@ class SupplyChainGraph:
 
 
 # Example usage
-def main():
-    # Initialize the supply chain graph
-    scg = SupplyChainGraph()
 
-    # Fetch data (replace with your actual base URL, version, and timestamp)
-    data = scg.fetch_data(base_url="http://localhost:8000", version="v2", timestamp="3")
-
-    if data:
-        # Build the graph
-        G = scg.build_graph()
-
-        # Check if the node exists in the graph
-        if "supplier_1002656" in G:
-            print(G.nodes["supplier_1002656"])
-        else:
-            print("Node 'supplier_1002656' does not exist in the graph.")
-        # print(G.nodes," ",len(G.nodes))
-
-        # Check if the node exists in the graph
-        node_id = "supplier_1002656"
-        if node_id in G:
-            # Get incoming edges
-            incoming_edges = G.edges(node_id, data=True)
-            print(f"Incoming edges for {node_id}:")
-            for edge in incoming_edges:
-                print(edge)
-
-            # Get outgoing edges
-            outgoing_edges = G.edges(node_id, data=True)
-            print(f"Outgoing edges for {node_id}:")
-            for edge in outgoing_edges:
-                print(edge)
-        else:
-            print(f"Node '{node_id}' does not exist in the graph.")
-
-        # Calculate final ranking with custom weights
-        ranking = scg.calculate_final_ranking(
-            structural_weight=0.6,  # Give more weight to structural metrics
-            attribute_weight=0.4,  # Give less weight to attribute metrics
-        )
-
-        # Print the results
-        print("\nSupplier Rankings:")
-        print(ranking.to_string(index=False))
-
-        # Optional: Save rankings to CSV
-        ranking.to_csv("supplier_rankings.csv", index=False)
-
-
-if __name__ == "__main__":
-    main()
