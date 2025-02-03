@@ -6,11 +6,8 @@ import plotly.express as px
 from datetime import datetime
 import requests
 import json
-import matplotlib.pyplot as plt
 from networkx.drawing.layout import spring_layout
 from Supplier_Ranking import SupplyChainGraph
-from pyvis.network import Network
-import streamlit.components.v1 as components
 import os
 import random
 import query_explorer, query_main
@@ -28,10 +25,13 @@ st.markdown(
         padding: 2rem;
     }
     .stPlotlyChart {
-        background-color: white;
-        border-radius: 5px;
-        padding: 1rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        background-color: transparent !important;
+        padding: 0 !important;
+        border: none !important;
+    }
+    .stPlotlyChart > div {
+        padding: 0 !important;
+        background-color: transparent !important;
     }
     .metric-card {
         background-color: white;
@@ -145,7 +145,7 @@ def dashboard_page():
 
 
 def display_graph(G: nx.Graph, timestamp: str = "", max_nodes: int = 50):
-    """Display graph using pyvis"""
+    """Display graph using Plotly"""
     # Create a new graph for visualization
     vis_graph = nx.Graph()
 
@@ -164,8 +164,25 @@ def display_graph(G: nx.Graph, timestamp: str = "", max_nodes: int = 50):
             if neighbor in nodes_to_show:
                 vis_graph.add_edge(node, neighbor, **G.edges[node, neighbor])
 
-    # Create and configure the pyvis network
-    net = Network(notebook=True, height="500px", width="100%")
+    # Use Fruchterman-Reingold layout for better node distribution
+    pos = nx.spring_layout(vis_graph)
+
+    # Create edges
+    edge_x = []
+    edge_y = []
+    for edge in vis_graph.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(
+        x=edge_x,
+        y=edge_y,
+        line=dict(width=0.5, color="#888"),
+        hoverinfo="none",
+        mode="lines",
+    )
 
     # Define fixed colors for node types
     node_colors = {
@@ -174,58 +191,61 @@ def display_graph(G: nx.Graph, timestamp: str = "", max_nodes: int = 50):
         "warehouse": "#FDD835",  # Yellow
     }
 
-    # Add nodes with different colors based on type
-    for node, attrs in vis_graph.nodes(data=True):
-        node_type = attrs.get("type", "default")
-        color = node_colors.get(node_type, "#999999")  # Default gray for unknown types
-        net.add_node(node, color=color, title=str(attrs))
+    # Create node traces for each type
+    node_traces = []
+    for node_type, color in node_colors.items():
+        node_x = []
+        node_y = []
+        node_text = []
+        node_info = []
 
-    # Add edges
-    for source, target, attrs in vis_graph.edges(data=True):
-        net.add_edge(source, target, title=str(attrs))
+        for node, attrs in vis_graph.nodes(data=True):
+            if attrs.get("type") == node_type:
+                x, y = pos[node]
+                node_x.append(x)
+                node_y.append(y)
+                node_text.append(str(node))
+                node_info.append("<br>".join([f"{k}: {v}" for k, v in attrs.items()]))
 
-    # Set physics options for better layout
-    net.set_options(
-        """
-        var options = {
-            "physics": {
-                "forceAtlas2Based": {
-                    "gravitationalConstant": -100,
-                    "centralGravity": 0.01,
-                    "springLength": 100,
-                    "springConstant": 0.08
-                },
-                "minVelocity": 0.75,
-                "solver": "forceAtlas2Based"
-            },
-            "nodes": {
-                "font": {
-                    "size": 12
-                }
-            },
-            "edges": {
-                "color": {
-                    "opacity": 0.7
-                },
-                "smooth": {
-                    "type": "continuous"
-                }
-            }
-        }
-    """
+        if node_x:  # Only create trace if there are nodes of this type
+            node_trace = go.Scatter(
+                x=node_x,
+                y=node_y,
+                mode="markers+text",
+                hoverinfo="text",
+                text=node_text,
+                textposition="top center",
+                hovertext=node_info,
+                name=node_type.capitalize(),
+                marker=dict(color=color, size=20, line=dict(width=2, color="white")),
+            )
+            node_traces.append(node_trace)
+
+    # Create the figure
+    fig = go.Figure(
+        data=[edge_trace, *node_traces],
+        layout=go.Layout(
+            title=dict(
+                text=f'Network Graph{" (" + timestamp + ")" if timestamp else ""}',
+                font=dict(size=16),
+            ),
+            showlegend=True,
+            hovermode="closest",
+            margin=dict(b=20, l=5, r=5, t=40),
+            annotations=[dict(text="", showarrow=False, xref="paper", yref="paper")],
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            height=500,
+        ),
     )
 
-    # Ensure cache directory exists
-    os.makedirs("cache", exist_ok=True)
-
-    # Generate HTML file
-    html_file = f"cache/graph_{timestamp.replace(' ', '_')}.html"
-    net.save_graph(html_file)
-
-    # Read the generated HTML
-    with open(html_file, "r") as f:
-        source_code = f.read()
-    components.html(source_code, height=500)
+    # Display the plot in Streamlit with transparent background
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=0, r=0, t=40, b=0)
+    )
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 
 def main():
