@@ -245,7 +245,7 @@ class SupplyChainGraph:
             supplier_edges = self.G.in_edges(supplier, data=True)
 
             # Calculate metrics based on edge attributes
-            po_count = sum(edge.get("#PO", 0) for _, _, edge in supplier_edges)
+            po_count = sum(edge.get("#PO", 0) or 0 for _, _, edge in supplier_edges)
             preferred_supplier_count = sum(
                 1
                 for _, _, edge in supplier_edges
