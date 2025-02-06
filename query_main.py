@@ -118,7 +118,61 @@ def display_graph(G: nx.Graph, timestamp: str = "", max_nodes: int = 50):
 
     # Display the plot in Streamlit
     st.plotly_chart(fig, use_container_width=True)
+    
+    # Add hop table below the visualization
+    create_hop_table(G)
 
+
+def create_hop_table(G):
+    """Create a table showing nodes organized by hop distance in a tree-like structure"""
+    # Dictionary to store nodes by hop distance
+    max_hops = 0
+
+    # Create DataFrame for visualization with tree-like structure
+    table_data = []
+    
+    for source in sorted(G.nodes()):
+        # Get all paths from this source
+        paths = nx.single_source_shortest_path(G, source)
+        max_hops = max(max_hops, max(len(path)-1 for path in paths.values()))
+        
+        # Group paths by their first different node after source
+        path_groups = {}
+        for target, path in paths.items():
+            if len(path) > 1:
+                first_diff = path[1]
+                if first_diff not in path_groups:
+                    path_groups[first_diff] = []
+                path_groups[first_diff].append(path)
+        
+        # Create the source row
+        row = {f'Hop {i}': '' for i in range(max_hops + 1)}
+        row['Hop 0'] = source
+        table_data.append(row)
+        
+        # Add paths grouped by their first different node
+        for first_diff, group_paths in sorted(path_groups.items()):
+            # Add the first different node
+            row = {f'Hop {i}': '' for i in range(max_hops + 1)}
+            row['Hop 1'] = first_diff
+            table_data.append(row)
+            
+            # Add subsequent nodes in the paths
+            for path in sorted(group_paths, key=len):
+                if len(path) > 2:  # Only add if there are more nodes after first_diff
+                    row = {f'Hop {i}': '' for i in range(max_hops + 1)}
+                    for i, node in enumerate(path[2:], start=2):
+                        row[f'Hop {i}'] = node
+                    table_data.append(row)
+        
+        # Add an empty row for visual separation between different source nodes
+        table_data.append({f'Hop {i}': '' for i in range(max_hops + 1)})
+
+    df = pd.DataFrame(table_data)
+    
+    # Display the table using Streamlit
+    st.subheader('Node Hop Analysis')
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
 def create_network_visualization(G):
     """Create an enhanced network visualization using Plotly with Kamada-Kawai layout"""
